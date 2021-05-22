@@ -2,7 +2,7 @@
 Utilities for E-Z reader. This file collects all basic functions used in E-Z reader.
 """
 
-import numpy as np
+import math
 
 def time_familiarity_check(distance, wordlength, frequency, predictability, eccentricity, alpha1=104, alpha2=3.4, alpha3=39):
     """
@@ -16,7 +16,7 @@ def time_familiarity_check(distance, wordlength, frequency, predictability, ecce
     :otherparameters: other parameters affecting familiarity check (alpha1, alpha2, alpha3)
     return: time of familiarity check in ms
     """
-    tL1 = alpha1 - alpha2*np.log(frequency) - alpha3*predictability
+    tL1 = alpha1 - alpha2*math.log(frequency) - alpha3*predictability
     tL1 = tL1 * pow (eccentricity, (distance+(wordlength-1)/2)) #adjust tL1 by accentricity and distance to the middle point of the word
     return tL1
 
@@ -32,11 +32,12 @@ def time_lexical_access(frequency, predictability, delta, alpha1=104, alpha2=3.4
     :otherparameters: other parameters affecting familiarity check (alpha1, alpha2, alpha3)
     return: time of familiarity check in ms
     """
-    tL2 = delta*(alpha1 - alpha2*np.log(frequency) - alpha3*predictability)
+    tL2 = delta*(alpha1 - alpha2*math.log(frequency) - alpha3*predictability)
     return tL2
 
 if __name__ == "__main__":
-    tL1 = time_familiarity_check(3, 4, 1e05, 0.2, 1.15)
+    #examples how to run functions
+    tL1 = time_familiarity_check(3, 4, 3e05, 0.2, 1.15)
     tL2 = time_lexical_access(1e05, 0.2, 0.34)
     print(tL1)
     print(tL2)

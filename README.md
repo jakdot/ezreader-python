@@ -4,10 +4,10 @@ This repo provides the code for E-Z reader, implemented based on the description
 
 ## Requirements
 
-Python 3 (at least 3.4), simpy and numpy.
+Python 3 (at least 3.4), simpy.
 
 ## How to run
 
 Try to run simulation example:
 
-python simulation.py
+python examples.py
