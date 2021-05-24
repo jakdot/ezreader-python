@@ -17,7 +17,7 @@ def time_familiarity_check(distance, wordlength, frequency, predictability, ecce
     return: time of familiarity check in ms
     """
     tL1 = alpha1 - alpha2*math.log(frequency) - alpha3*predictability
-    tL1 = tL1 * pow (eccentricity, (distance+(wordlength-1)/2)) #adjust tL1 by accentricity and distance to the middle point of the word
+    tL1 = tL1 * pow (eccentricity, (distance+(wordlength-1)/2)) #adjust tL1 by eccentricity and distance to the middle point of the word
     return tL1
 
 def time_lexical_access(frequency, predictability, delta, alpha1=104, alpha2=3.4, alpha3=39):

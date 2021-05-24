@@ -6,11 +6,14 @@ Simulation of E-Z reader.
 # add noise (gamma, normal)
 
 from collections import namedtuple
+import math
 
-from scipy.stats import uniform
+from numpy.random import uniform, normal
 import simpy
 
 import utilities as ut
+
+OPTIMAL_SACCADE_LENGTH = 7
 
 Word = namedtuple('Word', 'token frequency predictability integration_time integration_failure')
 Action = namedtuple('Action', 'name details time')
@@ -30,6 +33,11 @@ class Simulation(object):
             "saccade_programming": 125,
             "saccade_finishing": 25,
             "time_attention_shift": 25,
+            "omega1": 6,
+            "omega2": 3,
+            "eta1": 0.5,
+            "eta2": 0.15,
+            "lambda": 0.16,
             "probability_correct_regression": 0.6 # see Reichle et al. 2009, p. 13 - last word 0.6
             }
 
@@ -48,13 +56,14 @@ class Simulation(object):
 
         self.env.process(self.__visual_processing__(sentence))
         self.fixation_point = initial_fixation #the point at which fixation starts (default = 1 = the first letter)
-        self.attended_word = None
-        self.last_action = None
+        self.attended_word = None #what word is currently attended?
+        self.last_action = None # what was the last action?
+        self.trace = trace # should we print trace?
         self.__canbeinterrupted = True
         self.__plan_sacade = False
         self.__saccade = None
         self.__repeated_attention = 0 # time on repeated attention due to integration failure
-        self.trace = trace
+        self.__fixation_launch_site = 0
 
     @property
     def time(self):
@@ -91,7 +100,7 @@ class Simulation(object):
                 self.__saccade.interrupt()
             except (AttributeError, RuntimeError):
                 pass
-            if self.fixation_point != new_fixation_point: # start a saccade only if fixation away from the current word
+            if (float(self.fixation_point) <  float(new_fixation_point) - len(word)/2) or (float(self.fixation_point) >  float(new_fixation_point) + len(word)/2): # start a saccade only if fixation away from the current word
                 self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=new_fixation_point, word=word, canbeinterrupted=canbeinterrupted))
 
         # mark that the next saccade should be started if saccade is going on but cannot be interrupted
@@ -133,15 +142,27 @@ class Simulation(object):
 
             self.__collect_action__(Action('Saccade finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
 
-            self.fixation_point = new_fixation_point
+            intended_saccade_length = abs(self.fixation_point - new_fixation_point)
+
+            systematic_error = (OPTIMAL_SACCADE_LENGTH - intended_saccade_length) * ( (self.model_parameters["omega1"] - math.log(self.time - self.__fixation_launch_site)) / (self.model_parameters["omega2"]))
+
+            self.__fixation_launch_site = self.time
+
+            self.fixation_point = normal( new_fixation_point + systematic_error, self.model_parameters["eta1"] + self.model_parameters["eta2"]*intended_saccade_length)
 
             # finally, if there was meanwhile request for another saccade (by __plan_saccade), start executing it now; otherwise set __saccade at done (None, the starting point)
             if self.__plan_sacade:
                 self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=self.__plan_sacade[0], word=self.__plan_sacade[1], canbeinterrupted=self.__plan_sacade[2]))
                 self.__plan_sacade = False
             else:
-                self.__saccade = None
-                self.__canbeinterrupted = True
+
+                # now two situations: either refixation, or done;
+                random_draw = uniform()
+                if self.model_parameters["lambda"] * abs(self.fixation_point - new_fixation_point) >= random_draw:
+                    self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=new_fixation_point, word=word, canbeinterrupted=canbeinterrupted))
+                else:
+                    self.__saccade = None
+                    self.__canbeinterrupted = True
 
     def __integration__(self, last_letter, new_fixation_point, new_fixation_point2, elem, elem_for_attention, next_elem):
         """
@@ -158,7 +179,7 @@ class Simulation(object):
 
         yield self.__timeout__(float(elem.integration_time))
         
-        random_draw = uniform.rvs(loc=0, scale=1)
+        random_draw = uniform()
 
         # two options - either failed integration or successful
         if float(elem.integration_failure) >= random_draw:
@@ -203,7 +224,7 @@ class Simulation(object):
             
             distance = last_letter - self.fixation_point
             
-            random_draw = uniform.rvs(loc=0, scale=1)
+            random_draw = uniform()
 
             # calculate L1, either 0 or time according to the formula in ut
             # probably should be zero when you reattend, since the word is familiar already?
@@ -257,7 +278,7 @@ class Simulation(object):
             distance = first_letter - self.fixation_point
             
             # calculate L1, either 0 or time according to the formula in ut
-            random_draw = uniform.rvs(loc=0, scale=1)
+            random_draw = uniform()
 
             if float(elem.predictability) > random_draw:
                 time_familiarity_check = 0
@@ -309,8 +330,9 @@ class Simulation(object):
                 prev_pos = 0
                 prev_elem = Word('None', 1e06, 1, 0, 0)
 
-            random_draw = uniform.rvs(loc=0, scale=1)
+            random_draw = uniform()
 
+            # this checks whether, in case of failure, you will regress to the actual word or one word before that (simplifying assumption about regressions)
             if float(self.model_parameters["probability_correct_regression"]) >= random_draw:
                 self.env.process(self.__integration__(last_letter=first_letter+len(elem.token), new_fixation_point=first_letter - 0.5 + len(elem.token)/2, new_fixation_point2=new_fixation_point, elem=elem, elem_for_attention=elem, next_elem=next_elem))
             else:
@@ -343,7 +365,6 @@ class Simulation(object):
         Run simulation.
         """
         self.env.run(until=until)
-
 
 if __name__ == "__main__":
     #examples how to run simulation
