@@ -3,10 +3,7 @@ Simulation of E-Z reader.
 """
 
 # TODO:
-# regression instead of just break point - finish attend_again
-# finish that attention is only on the regressed word
 # add noise (gamma, normal)
-
 
 from collections import namedtuple
 
@@ -73,6 +70,35 @@ class Simulation(object):
         """
         return self.env.timeout(time_in_ms/1000)
 
+    def __collect_action__(self, action):
+        """
+        Collect action and print if trace parameter of the model set to True.
+        :param action: namedtuple Action
+        """
+        self.last_action = action
+
+        if self.trace:
+            print(self.last_action)
+
+    def __prepare_saccade__(self, new_fixation_point, word, canbeinterrupted=True):
+        """
+        Prepare saccade. This function checks if a saccade can be interrupted, interrupts it if possible and sends a request to start a new saccade.
+        """
+        if self.__canbeinterrupted:
+
+            # try to interrupt unless __saccade is None (at start) or RunTimeError (it was already terminated by some other process)
+            try:
+                self.__saccade.interrupt()
+            except (AttributeError, RuntimeError):
+                pass
+            if self.fixation_point != new_fixation_point: # start a saccade only if fixation away from the current word
+                self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=new_fixation_point, word=word, canbeinterrupted=canbeinterrupted))
+
+        # mark that the next saccade should be started if saccade is going on but cannot be interrupted
+        else:
+            if self.fixation_point != new_fixation_point:
+                self.__plan_sacade = (new_fixation_point, word, canbeinterrupted)
+
     def __saccadic_programming__(self, new_fixation_point, word, regression=False, canbeinterrupted=True):
         """
         Generator simulating saccadic programming.
@@ -80,44 +106,36 @@ class Simulation(object):
         :param new_fixation_point: where to move (in number of letters)
         :param word: what word is saccade into
         """
-        self.last_action = Action('Started saccade', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time)
+        self.__collect_action__(Action('Started saccade', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
 
-        if self.trace:
-            print(self.last_action)
-
+        # labile saccade programming M1 (unless canbeinterrupted is specified as False)
         self.__canbeinterrupted = canbeinterrupted
         tM1 = self.model_parameters['saccade_programming'] #tM1, see p. 5
 
         try:
-            # try to run the full process
+            # try to run the full M1 process
             yield self.__timeout__(tM1)
 
         except simpy.Interrupt:
             # unless it was interrupted; in that case, stop
-            self.last_action = Action('Interrupted saccade programming', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time)
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('Interrupted saccade programming', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
             self.__canbeinterrupted = True
 
         else:
-            self.__canbeinterrupted = False
-            self.last_action = Action('Saccade programming finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time)
 
-            if self.trace:
-                print(self.last_action)
+            # if the process was not interrupted, proceed to M2 (non-labile process)
+            self.__canbeinterrupted = False
+            self.__collect_action__(Action('Saccade programming finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
 
             tM2 = self.model_parameters['saccade_finishing'] #tM2
 
             yield self.__timeout__(tM2)
 
-            self.last_action = Action('Saccade finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('Saccade finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
 
             self.fixation_point = new_fixation_point
 
-            # finally, if there was meanwhile requiest for another sacaade start executing it now, or set saccade at done (None, the starting point)
+            # finally, if there was meanwhile request for another saccade (by __plan_saccade), start executing it now; otherwise set __saccade at done (None, the starting point)
             if self.__plan_sacade:
                 self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=self.__plan_sacade[0], word=self.__plan_sacade[1], canbeinterrupted=self.__plan_sacade[2]))
                 self.__plan_sacade = False
@@ -136,54 +154,26 @@ class Simulation(object):
         :param elem_for_attention: what element will be attended to when failure
         :param next_elem: what element the attention will jump onto after success in reintegration
         """
-        self.last_action = Action('Started integration', " ".join(["Word:", str(elem.token)]), self.time)
+        self.__collect_action__(Action('Started integration', " ".join(["Word:", str(elem.token)]), self.time))
 
-        if self.trace:
-            print(self.last_action)
-
-        integration_failure = float(elem.integration_failure)
-        integration_time = float(elem.integration_time)
-        
-        yield self.__timeout__(integration_time) 
+        yield self.__timeout__(float(elem.integration_time))
         
         random_draw = uniform.rvs(loc=0, scale=1)
 
         # two options - either failed integration or successful
-        if integration_failure >= random_draw:
+        if float(elem.integration_failure) >= random_draw:
         
-            self.last_action = Action('Failed integration', " ".join(["Word:", str(elem.token)]), self.time)
+            self.__collect_action__(Action('Failed integration', " ".join(["Word:", str(elem.token)]), self.time))
 
-            if self.trace:
-                print(self.last_action)
-
+            # if failed integration, start saccade back to that word and attend the word again
             self.__prepare_saccade__(new_fixation_point, str(elem_for_attention.token), canbeinterrupted=False)
             self.env.process(self.__attend_again__(last_letter, new_fixation_point2, elem=elem_for_attention, next_elem=next_elem))
 
         else:
 
-            self.last_action = Action('Successful integration', " ".join(["Word:", str(elem.token)]), self.time)
+            self.__collect_action__(Action('Successful integration', " ".join(["Word:", str(elem.token)]), self.time))
 
-            if self.trace:
-                print(self.last_action)
 
-    def __prepare_saccade__(self, new_fixation_point, word, canbeinterrupted=True):
-        """
-        Prepare saccade. This function checks if a saccade can be interrupted, interrupts it if possible and sends a request to start a new saccade.
-        """
-        if self.__canbeinterrupted:
-
-            # try to interrupt unless __saccade is None (at start) or RunTimeError (it  was already terminated by some other process)
-            try:
-                self.__saccade.interrupt()
-            except (AttributeError, RuntimeError):
-                pass
-            if self.fixation_point != new_fixation_point:
-                self.__saccade = self.env.process(self.__saccadic_programming__(new_fixation_point=new_fixation_point, word=word, canbeinterrupted=canbeinterrupted))
-
-        # mark that the next saccade should be started if saccade is going on but cannot be interrupted
-        else:
-            if self.fixation_point != new_fixation_point:
-                self.__plan_sacade = (new_fixation_point, word, canbeinterrupted)
 
     def __attend_again__(self, last_letter, new_fixation_point, elem, next_elem):
         """
@@ -196,10 +186,7 @@ class Simulation(object):
             yield self.__timeout__(time_attention_shift)
             self.attended_word = elem
             
-            self.last_action = Action('Attention shift', " ".join(["To word:", str(elem.token)]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('Attention shift', " ".join(["To word:", str(elem.token)]), self.time))
 
         # check first if you attend outside of the text (zeroth word)
         if elem.token == "None":
@@ -207,10 +194,7 @@ class Simulation(object):
             self.__repeated_attention += time_familiarity_check
             yield self.__timeout__(time_familiarity_check)
 
-            self.last_action = Action('L1 FAKE', " ".join(["Word:", str(self.attended_word.token)]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('L1 FAKE', " ".join(["Word:", str(self.attended_word.token)]), self.time))
 
             self.__prepare_saccade__(new_fixation_point, str(next_elem.token))
                 
@@ -223,7 +207,7 @@ class Simulation(object):
 
             # calculate L1, either 0 or time according to the formula in ut
             # probably should be zero when you reattend, since the word is familiar already?
-            # not clear - based on Reichle et al. 2009 it seems that L1 should be done again but it might be they assume a high cloze probability the second time, so L1 effectively becomes zero; this aslo matches simulations from Staub (2011)
+            # not clear - based on Reichle et al. 2009 it seems that L1 should be done again but it might be they assume a high cloze probability the second time, so L1 effectively becomes zero; this also matches simulations from Staub (2011)
 
             # we assume that the second time around, predictability is close to 1 (per model parameter), hence L1 skipped:
 
@@ -237,10 +221,7 @@ class Simulation(object):
             
             yield self.__timeout__(time_familiarity_check)
 
-            self.last_action = Action('L1', " ".join(["Word:", str(self.attended_word.token)]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('L1', " ".join(["Word:", str(self.attended_word.token)]), self.time))
                 
             self.__prepare_saccade__(new_fixation_point, str(next_elem.token))
 
@@ -251,21 +232,13 @@ class Simulation(object):
 
             yield self.__timeout__(time_lexical_access)
 
-            self.last_action = Action('L2', " ".join(["Word:", str(self.attended_word.token)]), self.time)
-                
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('L2', " ".join(["Word:", str(self.attended_word.token)]), self.time))
         
-            integration_time = float(elem.integration_time)
-                
-            self.__repeated_attention += integration_time
+            self.__repeated_attention += float(elem.integration_time)
         
-            yield self.__timeout__(integration_time) 
+            yield self.__timeout__(float(elem.integration_time))
             
-            self.last_action = Action('Successful integration', " ".join(["Word:", str(elem.token)]), self.time)
-                
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('Successful integration', " ".join(["Word:", str(elem.token)]), self.time))
             
             # reset attended word to continue in normal way
             self.attended_word = old_attended_word
@@ -283,9 +256,9 @@ class Simulation(object):
             # calculate distance from the current fixation to the first letter of the word
             distance = first_letter - self.fixation_point
             
+            # calculate L1, either 0 or time according to the formula in ut
             random_draw = uniform.rvs(loc=0, scale=1)
 
-            # calculate L1, either 0 or time according to the formula in ut
             if float(elem.predictability) > random_draw:
                 time_familiarity_check = 0
 
@@ -294,14 +267,13 @@ class Simulation(object):
 
             yield self.__timeout__(time_familiarity_check)
             
-            yield self.__timeout__(self.__repeated_attention)
+            yield self.__timeout__(self.__repeated_attention) # add extra time if there is a repeated processing of some previous word
             
             self.__repeated_attention = 0
 
-            self.last_action = Action('L1', " ".join(["Word:", str(elem.token)]), self.time)
+            self.__collect_action__(Action('L1', " ".join(["Word:", str(elem.token)]), self.time))
 
-            if self.trace:
-                print(self.last_action)
+            #start programming movement to the next word
 
             try:
                 # if there is a next word, store that info
@@ -311,7 +283,6 @@ class Simulation(object):
                 pass
 
             else:
-                #start programming movement to the next word
                 new_fixation_point = first_letter + len(elem.token) + 0.5 + len(next_elem.token)/2 # move to the middle of the next word
 
                 self.__prepare_saccade__(new_fixation_point, str(next_elem.token))
@@ -321,14 +292,14 @@ class Simulation(object):
 
             yield self.__timeout__(time_lexical_access)
             
-            yield self.__timeout__(self.__repeated_attention)
+            yield self.__timeout__(self.__repeated_attention) # add extra time if there is a repeated processing of some previous word
             
             self.__repeated_attention = 0
 
-            self.last_action = Action('L2', " ".join(["Word:", str(elem.token)]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('L2', " ".join(["Word:", str(elem.token)]), self.time))
+            ########################
+            #  start integration   #
+            ########################
 
             if i > 0:
                 # if there is a previous word, store that info, needed for integration
@@ -345,16 +316,19 @@ class Simulation(object):
             else:
                 self.env.process(self.__integration__(last_letter=first_letter - 2,new_fixation_point=prev_pos, new_fixation_point2=new_fixation_point, elem=elem, elem_for_attention=prev_elem, next_elem=next_elem))
 
+            ########################
+            #   end integration    #
+            ########################
+
             time_attention_shift = self.model_parameters["time_attention_shift"]
 
-            yield self.__timeout__(time_attention_shift + self.__repeated_attention)
+            yield self.__timeout__(time_attention_shift)
+            
+            yield self.__timeout__(self.__repeated_attention) # add extra time if there is a repeated processing of some previous word
 
             self.__repeated_attention = 0
 
-            self.last_action = Action('Attention shift', " ".join(["From word:", str(elem.token)]), self.time)
-
-            if self.trace:
-                print(self.last_action)
+            self.__collect_action__(Action('Attention shift', " ".join(["From word:", str(elem.token)]), self.time))
 
             first_letter += len(elem.token) + 1 #set the first letter of the new word (assuming 1 space btwn words)
 
