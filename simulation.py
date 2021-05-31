@@ -7,6 +7,7 @@ Simulation of E-Z reader.
 
 from collections import namedtuple
 import math
+import numpy as np
 
 from numpy.random import uniform, normal
 import simpy
@@ -57,6 +58,7 @@ class Simulation(object):
         self.env.process(self.__visual_processing__(sentence))
         self.fixation_point = initial_fixation #the point at which fixation starts (default = 1 = the first letter)
         self.attended_word = None #what word is currently attended?
+        self.fixated_word = None #what word is currently fixated?
         self.last_action = None # what was the last action?
         self.trace = trace # should we print trace?
         self.__canbeinterrupted = True
@@ -64,6 +66,17 @@ class Simulation(object):
         self.__saccade = None
         self.__repeated_attention = 0 # time on repeated attention due to integration failure
         self.__fixation_launch_site = 0
+        self.__word__position_dict = {}
+
+        position = 1
+        for word in sentence:
+            self.__word__position_dict[(position, position+1+len(word.token))] = word.token
+            position += 1+len(word.token)
+
+        for position in self.__word__position_dict:
+            if initial_fixation >= position[0] and initial_fixation <= position[1]:
+                self.fixated_word = self.__word__position_dict[position]
+                break
 
     @property
     def time(self):
@@ -141,6 +154,7 @@ class Simulation(object):
             yield self.__timeout__(tM2)
 
             self.__collect_action__(Action('Saccade finished', " ".join(['Planned saccade:', str(self.fixation_point), '->',  str(new_fixation_point), 'Word:', word]), self.time))
+            
 
             intended_saccade_length = abs(self.fixation_point - new_fixation_point)
 
@@ -149,6 +163,12 @@ class Simulation(object):
             self.__fixation_launch_site = self.time
 
             self.fixation_point = normal( new_fixation_point + systematic_error, self.model_parameters["eta1"] + self.model_parameters["eta2"]*intended_saccade_length)
+            
+            # store what word is now fixated
+            for position in self.__word__position_dict:
+                if self.fixation_point >= position[0] and self.fixation_point <= position[1]:
+                    self.fixated_word = self.__word__position_dict[position]
+                    break
 
             # finally, if there was meanwhile request for another saccade (by __plan_saccade), start executing it now; otherwise set __saccade at done (None, the starting point)
             if self.__plan_sacade:
@@ -368,12 +388,14 @@ class Simulation(object):
 
 if __name__ == "__main__":
     #examples how to run simulation
-    sim = Simulation(sentence=[Word('john', 5e06, 0.01, 25, 0.01), Word('sleeps', 2e05, 0.01, 25, 0.01), Word('long', 1e05, 0.01, 25, 0.01)], realtime=False)
-    #sim.run(2) #if you want to run the whole simulation
-    while True:
-        try:
-            sim.step()
-            print("Current fixation point: ", sim.fixation_point)
-        except simpy.core.EmptySchedule:
-            break
+    sleeps_fixated = []
+    for _ in range(1):
+        sim = Simulation(sentence=[Word('john', 5e06, 0.01, 25, 0.01), Word('sleeps', 2e05, 0.01, 25, 0.01), Word('extremely', 1e03, 0.01, 25, 0.01), Word('long', 1e05, 0.01, 25, 0.01)], realtime=False, trace=False)
+        #sim.run(2) #if you want to run the whole simulation
+        sleeps_fixated.append(0)
+        while True:
+            try:
+                sim.step()
+            except simpy.core.EmptySchedule:
+                break
 

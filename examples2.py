@@ -41,7 +41,6 @@ for _ in range(1000):
         #print(simulation_value)
         #input()
 
-
     for inttime, intfailure in simulation_values:
         simulation_value = simulation([ez.Word('ambled', 1, 0, float(inttime), float(intfailure)), ez.Word('across', 5e03, 0, 25, 0), ez.Word('the', 1e05, 1, 25, 0), ez.Word('quad', 10, 1, 25, 0)])
         if simulation_value != 0:
