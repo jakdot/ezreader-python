@@ -12,7 +12,7 @@ import numpy as np
 from numpy.random import uniform, normal
 import simpy
 
-import utilities as ut
+import ezreader.utilities as ut
 
 OPTIMAL_SACCADE_LENGTH = 7
 
@@ -389,6 +389,7 @@ class Simulation(object):
 if __name__ == "__main__":
     #examples how to run simulation
     sleeps_fixated = []
+    highest_fixation = 0
     for _ in range(1):
         sim = Simulation(sentence=[Word('john', 5e06, 0.01, 25, 0.01), Word('sleeps', 2e05, 0.01, 25, 0.01), Word('extremely', 1e03, 0.01, 25, 0.01), Word('long', 1e05, 0.01, 25, 0.01)], realtime=False, trace=False)
         #sim.run(2) #if you want to run the whole simulation
@@ -396,6 +397,11 @@ if __name__ == "__main__":
         while True:
             try:
                 sim.step()
+                if sim.fixated_word and sim.fixation_point >= highest_fixation and sim.fixated_word != sleeps_fixated[-1]:
+                    sleeps_fixated.append(sim.fixated_word)
             except simpy.core.EmptySchedule:
                 break
+            highest_fixation = max(highest_fixation, sim.fixation_point)
+
+        print(sleeps_fixated)
 
