@@ -18,6 +18,6 @@ python setup.py install
 
 ## How to run
 
-Try to run simulation examples in the folder examples:
+Try to run simulation examples:
 
-python examples.py
+python example1.py
